@@ -2,26 +2,22 @@ FROM python:3.8-slim-bullseye
 
 ENV HOME="/root/"
 
-# Base tools and build deps (including jq as requested)
+# Base tools and build deps (including jq and Go for ProjectDiscovery tools)
 RUN apt-get update \
     && apt-get install -yq apt-utils build-essential curl gcc wget \
-    readline-common neovim git zsh zsh-syntax-highlighting zsh-autosuggestions jq python3-pip unzip p7zip libpcap-dev rubygems ruby-dev grc ca-certificates \
+    readline-common neovim git zsh zsh-syntax-highlighting zsh-autosuggestions jq python3-pip unzip p7zip libpcap-dev rubygems ruby-dev grc ca-certificates golang-go \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ProjectDiscovery tools: subfinder, httpx, dnsx (via official install scripts)
-RUN set -eux; \
-    cd /tmp; \
-    curl -sSfL https://raw.githubusercontent.com/projectdiscovery/subfinder/main/install.sh | sh -s -- -b /usr/local/bin; \
-    subfinder -version || subfinder -h
+ENV GOPATH=/root/go
+ENV PATH="$GOPATH/bin:${PATH}"
 
+# Install ProjectDiscovery tools via Go (official method)
 RUN set -eux; \
-    cd /tmp; \
-    curl -sSfL https://raw.githubusercontent.com/projectdiscovery/httpx/main/install.sh | sh -s -- -b /usr/local/bin; \
-    httpx -version || httpx -h
-
-RUN set -eux; \
-    cd /tmp; \
-    curl -sSfL https://raw.githubusercontent.com/projectdiscovery/dnsx/main/install.sh | sh -s -- -b /usr/local/bin; \
+    go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest; \
+    go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest; \
+    go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest; \
+    subfinder -version || subfinder -h; \
+    httpx -version || httpx -h; \
     dnsx -version || dnsx -h
 
 # Application code: use this repo's worker code, no Axiom
