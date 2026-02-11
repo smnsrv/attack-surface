@@ -7,11 +7,6 @@ services:
     image: proteus/worker
     build:
       context: bin/worker/
-    volumes:
-      - /home/op/.axiom/accounts/personal.json:/root/.axiom/accounts/default.json
-      - /home/op/.axiom/modules:/root/.axiom/modules
-      - /home/op/.ssh:/root/.ssh
-      - /home/op/.proteus:/app
     depends_on:
     - redis
     - mongo

@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-API_BASE_URL="${1:-http://localhost:8080}"
+API_BASE_URL="${1:-http://localhost:80}"
 TARGET_ID="${2:-smoke-target}"
 
 echo "[*] Creating/upserting target '${TARGET_ID}' via /mvp/targets ..."
