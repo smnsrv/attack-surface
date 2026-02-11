@@ -23,10 +23,11 @@ RUN set -eux; \
     if [ "$arch" = "arm64" ]; then sub_url="$sub_url_arm64"; fi; \
     echo "Downloading $sub_url"; \
     curl -sSL "$sub_url" -o subfinder.zip; \
-    unzip -q subfinder.zip; \
-    mv subfinder /usr/local/bin/subfinder; \
+    mkdir -p subfinder-extract; \
+    unzip -q subfinder.zip -d subfinder-extract; \
+    mv subfinder-extract/subfinder /usr/local/bin/subfinder; \
     chmod +x /usr/local/bin/subfinder; \
-    rm -rf subfinder.zip README.md LICENSE CHANGELOG.md 2>/dev/null || true; \
+    rm -rf subfinder.zip subfinder-extract; \
     subfinder -version || subfinder -h; \
     # httpx
     httpx_url_amd64="https://github.com/projectdiscovery/httpx/releases/download/v1.8.1/httpx_1.8.1_linux_amd64.zip"; \
@@ -35,10 +36,11 @@ RUN set -eux; \
     if [ "$arch" = "arm64" ]; then httpx_url="$httpx_url_arm64"; fi; \
     echo "Downloading $httpx_url"; \
     curl -sSL "$httpx_url" -o httpx.zip; \
-    unzip -q httpx.zip; \
-    mv httpx /usr/local/bin/httpx; \
+    mkdir -p httpx-extract; \
+    unzip -q httpx.zip -d httpx-extract; \
+    mv httpx-extract/httpx /usr/local/bin/httpx; \
     chmod +x /usr/local/bin/httpx; \
-    rm -rf httpx.zip README.md LICENSE CHANGELOG.md 2>/dev/null || true; \
+    rm -rf httpx.zip httpx-extract; \
     httpx -version || httpx -h; \
     # dnsx
     dnsx_url_amd64="https://github.com/projectdiscovery/dnsx/releases/download/v1.2.3/dnsx_1.2.3_linux_amd64.zip"; \
@@ -47,10 +49,11 @@ RUN set -eux; \
     if [ "$arch" = "arm64" ]; then dnsx_url="$dnsx_url_arm64"; fi; \
     echo "Downloading $dnsx_url"; \
     curl -sSL "$dnsx_url" -o dnsx.zip; \
-    unzip -q dnsx.zip; \
-    mv dnsx /usr/local/bin/dnsx; \
+    mkdir -p dnsx-extract; \
+    unzip -q dnsx.zip -d dnsx-extract; \
+    mv dnsx-extract/dnsx /usr/local/bin/dnsx; \
     chmod +x /usr/local/bin/dnsx; \
-    rm -rf dnsx.zip README.md LICENSE CHANGELOG.md 2>/dev/null || true; \
+    rm -rf dnsx.zip dnsx-extract; \
     dnsx -version || dnsx -h
 
 # Application code: use this repo's worker code, no Axiom
