@@ -9,9 +9,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ENV GOPATH=/root/go
-ENV PATH="$GOPATH/bin:${PATH}"
+ENV GOBIN=/usr/local/bin
+ENV GO111MODULE=on
+ENV PATH="${GOBIN}:${GOPATH}/bin:${PATH}"
 
-# Install ProjectDiscovery tools via Go (official method)
+# Install ProjectDiscovery tools via Go (official method, module-aware)
 RUN set -eux; \
     go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest; \
     go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest; \
