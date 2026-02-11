@@ -2,24 +2,55 @@ FROM python:3.8-slim-bullseye
 
 ENV HOME="/root/"
 
-# Base tools and build deps (including jq and Go for ProjectDiscovery tools)
+# Base tools and build deps (including jq and unzip for ProjectDiscovery binaries)
 RUN apt-get update \
-    && apt-get install -yq apt-utils build-essential curl gcc wget \
-    readline-common neovim git zsh zsh-syntax-highlighting zsh-autosuggestions jq python3-pip unzip p7zip libpcap-dev rubygems ruby-dev grc ca-certificates golang-go \
+    && apt-get install -yq apt-utils build-essential curl wget \
+    readline-common neovim git zsh zsh-syntax-highlighting zsh-autosuggestions jq python3-pip unzip p7zip libpcap-dev rubygems ruby-dev grc ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-ENV GOPATH=/root/go
-ENV GOBIN=/usr/local/bin
-ENV GO111MODULE=on
-ENV PATH="${GOBIN}:${GOPATH}/bin:${PATH}"
-
-# Install ProjectDiscovery tools via Go (official method, module-aware)
+# Install ProjectDiscovery tools from official GitHub release assets
 RUN set -eux; \
-    go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest; \
-    go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest; \
-    go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest; \
+    arch="amd64"; \
+    case "$(uname -m)" in \
+      x86_64) arch="amd64" ;; \
+      aarch64|arm64) arch="arm64" ;; \
+    esac; \
+    cd /tmp; \
+    # subfinder
+    sub_url_amd64="https://github.com/projectdiscovery/subfinder/releases/download/v2.12.0/subfinder_2.12.0_linux_amd64.zip"; \
+    sub_url_arm64="https://github.com/projectdiscovery/subfinder/releases/download/v2.12.0/subfinder_2.12.0_linux_arm64.zip"; \
+    sub_url="$sub_url_amd64"; \
+    if [ "$arch" = "arm64" ]; then sub_url="$sub_url_arm64"; fi; \
+    echo "Downloading $sub_url"; \
+    curl -sSL "$sub_url" -o subfinder.zip; \
+    unzip -q subfinder.zip; \
+    mv subfinder /usr/local/bin/subfinder; \
+    chmod +x /usr/local/bin/subfinder; \
+    rm -rf subfinder.zip README.md LICENSE CHANGELOG.md 2>/dev/null || true; \
     subfinder -version || subfinder -h; \
+    # httpx
+    httpx_url_amd64="https://github.com/projectdiscovery/httpx/releases/download/v1.8.1/httpx_1.8.1_linux_amd64.zip"; \
+    httpx_url_arm64="https://github.com/projectdiscovery/httpx/releases/download/v1.8.1/httpx_1.8.1_linux_arm64.zip"; \
+    httpx_url="$httpx_url_amd64"; \
+    if [ "$arch" = "arm64" ]; then httpx_url="$httpx_url_arm64"; fi; \
+    echo "Downloading $httpx_url"; \
+    curl -sSL "$httpx_url" -o httpx.zip; \
+    unzip -q httpx.zip; \
+    mv httpx /usr/local/bin/httpx; \
+    chmod +x /usr/local/bin/httpx; \
+    rm -rf httpx.zip README.md LICENSE CHANGELOG.md 2>/dev/null || true; \
     httpx -version || httpx -h; \
+    # dnsx
+    dnsx_url_amd64="https://github.com/projectdiscovery/dnsx/releases/download/v1.2.3/dnsx_1.2.3_linux_amd64.zip"; \
+    dnsx_url_arm64="https://github.com/projectdiscovery/dnsx/releases/download/v1.2.3/dnsx_1.2.3_linux_arm64.zip"; \
+    dnsx_url="$dnsx_url_amd64"; \
+    if [ "$arch" = "arm64" ]; then dnsx_url="$dnsx_url_arm64"; fi; \
+    echo "Downloading $dnsx_url"; \
+    curl -sSL "$dnsx_url" -o dnsx.zip; \
+    unzip -q dnsx.zip; \
+    mv dnsx /usr/local/bin/dnsx; \
+    chmod +x /usr/local/bin/dnsx; \
+    rm -rf dnsx.zip README.md LICENSE CHANGELOG.md 2>/dev/null || true; \
     dnsx -version || dnsx -h
 
 # Application code: use this repo's worker code, no Axiom
