@@ -13,7 +13,6 @@ collection_name = filename.split('.')[0].split("/")[-1]
 collection = db[collection_name]
 target_id = sys.argv[3]
 
-scan_meta = {'scan_id':scan_id, 'target_id':target_id}
 
 def jsonf_to_lines(filename):
     parsed_lines = []
@@ -28,15 +27,5 @@ def jsonf_to_lines(filename):
                 print("Whoops %s", err)
     return parsed_lines
 
+
 collection.insert_many(jsonf_to_lines(filename))
-res = db.scans.find({'scan_id':scan_id})
-
-i = 0
-for row in res:
-    i += 1
-
-if i < 1:
-    db.scans.insert_one(scan_meta)
-
-
-

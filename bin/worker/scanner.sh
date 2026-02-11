@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 PATH="$PATH:/root/.axiom/interact:/root/go/bin"
 
 echo "Scanning $1"
@@ -14,8 +16,13 @@ raw_path="$ppath/rawdata/$target_id/"
 threads=13
 notify="slack"
 
+trap 'python3 "$ppath/bin/parser/scan_meta.py" "$scan_id" "$target_id" "failed"' ERR
+
 mkdir -p "$scan_path"
 mkdir -p "$raw_path"
+
+# Record scan start in Mongo
+python3 "$ppath/bin/parser/scan_meta.py" "$scan_id" "$target_id" "start"
 
 cd "$scan_path"
 cp "$ppath/scope/$target_id" "$scan_path/scope.txt"
@@ -48,3 +55,6 @@ notify -bulk -i "$raw_path/url.txt.new"  -pc "$ppath/config/notify.yaml" -mf "Ne
 
 cat dns.json | jq -r '.host' | anew "$raw_path/resolved.txt"
 cat dns.json | jq -r '.a?[]?' | anew "$raw_path/ips.txt"
+
+# Mark scan success and record basic stats
+python3 "$ppath/bin/parser/scan_meta.py" "$scan_id" "$target_id" "success"

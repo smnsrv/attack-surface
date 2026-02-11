@@ -6,6 +6,7 @@ from flask import Flask
 from flask import request
 from flask import jsonify
 from datetime import datetime
+import os
 app = Flask(__name__)
 
 r = redis.Redis(host='redis', port=6379, db=0)
@@ -97,19 +98,31 @@ def start_scan(target):
     target_doc = targets.find_one({"_id": slug})
 
     if target_doc is None:
+        app.logger.error(f"launch_scan: target '{slug}' not found")
         return error_response("Target not found", 404)
 
     if not target_doc.get("enabled", True):
+        app.logger.error(f"launch_scan: target '{slug}' is disabled")
         return error_response("Target is disabled", 409)
 
     # Generate scope file from target domains for the worker pipeline
-    domains = target_doc.get("domains") or []
-    scope_path = f"/app/scope/{slug}"
+    domains = target_doc.get("domains")
+    if not isinstance(domains, list) or len(domains) == 0:
+        app.logger.error(f"launch_scan: target '{slug}' has no domains configured")
+        return error_response("Target has no domains configured", 400)
+
+    scope_dir = "/app/scope"
+    tmp_path = os.path.join(scope_dir, f"{slug}.tmp")
+    final_path = os.path.join(scope_dir, slug)
     try:
-        with open(scope_path, "w") as f:
+        os.makedirs(scope_dir, exist_ok=True)
+        with open(tmp_path, "w") as f:
             for d in domains:
                 f.write(f"{d}\n")
+        os.replace(tmp_path, final_path)
+        app.logger.info(f"launch_scan: wrote scope file '{final_path}' with {len(domains)} domains")
     except OSError as e:
+        app.logger.error(f"launch_scan: failed to write scope file for '{slug}': {str(e)}")
         return error_response(f"Failed to write scope file: {str(e)}", 500)
 
     if instances == None:

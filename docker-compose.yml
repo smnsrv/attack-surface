@@ -7,6 +7,8 @@ services:
     image: proteus/worker
     build:
       context: bin/worker/
+    volumes:
+      - scope_data:/app/scope
     depends_on:
     - redis
     - mongo
@@ -19,5 +21,10 @@ services:
     stop_signal: SIGINT
     ports:
     - '127.0.0.1:80:80'
+    volumes:
+      - scope_data:/app/scope
     depends_on:
       - redis
+
+volumes:
+  scope_data:
