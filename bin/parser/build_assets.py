@@ -3,9 +3,10 @@
 """
 Build inventory assets from raw collections subs/http.
 Emit asset_events for change detection and update scan with event counters.
-Usage: build_assets.py <scan_id> <target_id>
+Usage: build_assets.py --scan-id <string> --target-id <string> --org-id <string>
 """
 
+import argparse
 import sys
 from datetime import datetime
 
@@ -15,6 +16,23 @@ from pymongo import ReturnDocument
 
 def iso_utc_now():
     return datetime.utcnow().isoformat() + "Z"
+
+
+def _ensure_index(collection, keys, name):
+    """Create index only if one with the same key pattern does not already exist (idempotent)."""
+    want_dict = dict(keys) if isinstance(keys, list) else dict(list(keys))
+    for idx in collection.list_indexes():
+        if idx.get("key") == want_dict:
+            return
+    collection.create_index(keys, name=name)
+
+
+def ensure_asset_events_indexes(db):
+    """Ensure asset_events indexes exist; compare key pattern to avoid IndexOptionsConflict."""
+    events = db.asset_events
+    _ensure_index(events, [("organization_id", 1), ("created_at", -1)], "org_created_at_-1")
+    _ensure_index(events, [("organization_id", 1), ("scan_id", 1)], "org_scan_id_1")
+    _ensure_index(events, [("organization_id", 1), ("type", 1), ("created_at", -1)], "org_type_created_at_-1")
 
 
 def _asset_snapshot(doc):
@@ -42,48 +60,42 @@ def _detect_event_type(previous_snapshot, new_snapshot):
         return "dead"
     if previous_snapshot.get("status_code") != new_snapshot.get("status_code"):
         return "status_changed"
-    if previous_snapshot.get("risk_level") != new_snapshot.get("risk_level"):
-        return "risk_changed"
+    if previous_snapshot.get("risk_level") is not None or new_snapshot.get("risk_level") is not None:
+        if previous_snapshot.get("risk_level") != new_snapshot.get("risk_level"):
+            return "risk_changed"
     return None
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: build_assets.py <scan_id> <target_id>", file=sys.stderr)
-        sys.exit(1)
-
-    scan_id = (sys.argv[1] or "").strip()
-    target_id = sys.argv[2]
+    parser = argparse.ArgumentParser(description="Build assets from subs/http and emit asset_events.")
+    parser.add_argument("--scan-id", required=True, help="Scan id (required)")
+    parser.add_argument("--target-id", required=True, help="Target id (required)")
+    parser.add_argument("--org-id", required=True, help="Organization id slug, e.g. default (required)")
+    args = parser.parse_args()
+    scan_id = (args.scan_id or "").strip()
+    target_id = (args.target_id or "").strip()
+    org_id = (args.org_id or "").strip()
     if not scan_id:
-        print("build_assets: scan_id is required; cannot write partial events", file=sys.stderr)
+        print("build_assets: --scan-id is required", file=sys.stderr)
+        sys.exit(1)
+    if not target_id:
+        print("build_assets: --target-id is required", file=sys.stderr)
+        sys.exit(1)
+    if not org_id:
+        print("build_assets: --org-id is required", file=sys.stderr)
         sys.exit(1)
 
-    now_dt = datetime.utcnow()
-    now_iso = now_dt.isoformat() + "Z"
+    now_iso = datetime.utcnow().isoformat() + "Z"
 
     client = MongoClient("mongodb://mongo:27017")
     db = client.asm
 
-    target_doc = db.targets.find_one({"_id": target_id})
-    if not target_doc:
-        print(f"build_assets: target '{target_id}' not found", file=sys.stderr)
-        sys.exit(1)
-    organization_id = target_doc.get("organization_id")
-    if not organization_id:
-        print(f"build_assets: target '{target_id}' has no organization_id; org isolation required", file=sys.stderr)
-        sys.exit(1)
+    ensure_asset_events_indexes(db)
 
     db.assets.create_index(
         [("target_id", 1), ("type", 1), ("value", 1)],
         unique=True,
     )
-
-    # Cache previous assets by (type, value) for this target (single query)
-    prev_assets = {}
-    for a in db.assets.find({"organization_id": organization_id, "target_id": target_id}):
-        key = (a.get("type"), a.get("value"))
-        if key:
-            prev_assets[key] = a
 
     events_coll = db.asset_events
     new_assets = 0
@@ -95,7 +107,7 @@ def main():
     def write_event(asset_type, asset_value, event_type, old_subset, new_subset):
         nonlocal new_assets, dead_assets, status_changed, high_risk_new, events_inserted
         event_doc = {
-            "organization_id": organization_id,
+            "organization_id": org_id,
             "scan_id": scan_id,
             "target_id": target_id,
             "type": event_type,
@@ -118,43 +130,41 @@ def main():
     subs_processed = 0
     http_processed = 0
 
-    # 1) Subs: upsert assets; detect "new"; write events
+    # 1) Subs: find previous BEFORE update, upsert, compare and emit events
+    asset_type = "subdomain"
     for doc in db.subs.find({"scan_id": scan_id, "target_id": target_id}):
         fqdn = (doc.get("input") or "").strip().lower()
         if not fqdn:
             continue
-        key = ("subdomain", fqdn)
-        previous = prev_assets.get(key)
-        new_snapshot = {"alive": False, "status_code": None, "risk_level": (previous or {}).get("risk_level")}
-        event_type = _detect_event_type(_asset_snapshot(previous) if previous else None, new_snapshot)
-
+        previous = db.assets.find_one({"organization_id": org_id, "type": asset_type, "value": fqdn})
+        # organization_id only in $setOnInsert (immutable); same path in $set and $setOnInsert causes Mongo error 40
         res = db.assets.find_one_and_update(
-            {"target_id": target_id, "type": "subdomain", "value": fqdn},
+            {"target_id": target_id, "type": asset_type, "value": fqdn},
             {
                 "$set": {
                     "last_seen": now_iso,
                     "last_scan_id": scan_id,
-                    "organization_id": organization_id,
                 },
                 "$setOnInsert": {
                     "first_seen": now_iso,
                     "target_id": target_id,
-                    "type": "subdomain",
+                    "type": asset_type,
                     "value": fqdn,
                     "alive": False,
-                    "organization_id": organization_id,
+                    "organization_id": org_id,
                 },
             },
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
         if res:
-            prev_assets[key] = res
-        if event_type and res:
-            write_event("subdomain", fqdn, event_type, _asset_snapshot(previous) if previous else None, new_snapshot)
+            new_snapshot = _asset_snapshot(res)
+            event_type = _detect_event_type(_asset_snapshot(previous) if previous else None, new_snapshot)
+            if event_type:
+                write_event(asset_type, fqdn, event_type, _asset_snapshot(previous) if previous else None, new_snapshot)
         subs_processed += 1
 
-    # 2) Http: update assets with last_http and alive; detect dead/status_changed/risk_changed
+    # 2) Http: find previous BEFORE update, upsert, compare and emit events
     for doc in db.http.find({"scan_id": scan_id, "target_id": target_id}):
         fqdn = (doc.get("host") or doc.get("input") or "").strip().lower()
         if not fqdn:
@@ -171,46 +181,38 @@ def main():
             "timestamp": doc.get("timestamp"),
         }
         alive = doc.get("failed") is False
-        key = ("subdomain", fqdn)
-        previous = prev_assets.get(key)
-        new_snapshot = {
-            "alive": alive,
-            "status_code": last_http.get("status_code"),
-            "risk_level": (previous or {}).get("risk_level"),
-        }
-        event_type = _detect_event_type(_asset_snapshot(previous) if previous else None, new_snapshot)
-
+        previous = db.assets.find_one({"organization_id": org_id, "type": asset_type, "value": fqdn})
+        # organization_id only in $setOnInsert (immutable); same path in $set and $setOnInsert causes Mongo error 40
         res = db.assets.find_one_and_update(
-            {"target_id": target_id, "type": "subdomain", "value": fqdn},
+            {"target_id": target_id, "type": asset_type, "value": fqdn},
             {
                 "$set": {
                     "alive": alive,
                     "last_http": last_http,
-                    "organization_id": organization_id,
                 },
                 "$setOnInsert": {
                     "first_seen": now_iso,
                     "last_seen": now_iso,
                     "last_scan_id": scan_id,
                     "target_id": target_id,
-                    "type": "subdomain",
+                    "type": asset_type,
                     "value": fqdn,
-                    "organization_id": organization_id,
+                    "organization_id": org_id,
                 },
             },
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
         if res:
-            prev_assets[key] = res
-        if event_type and res:
-            old_snap = _asset_snapshot(previous) if previous else None
-            write_event("subdomain", fqdn, event_type, old_snap, new_snapshot)
+            new_snapshot = _asset_snapshot(res)
+            event_type = _detect_event_type(_asset_snapshot(previous) if previous else None, new_snapshot)
+            if event_type:
+                write_event(asset_type, fqdn, event_type, _asset_snapshot(previous) if previous else None, new_snapshot)
         http_processed += 1
 
     # Store event counters on scan document (strict: scan must exist)
     scan_result = db.scans.update_one(
-        {"_id": scan_id, "organization_id": organization_id},
+        {"_id": scan_id, "organization_id": org_id},
         {
             "$set": {
                 "new_assets": new_assets,
@@ -229,7 +231,9 @@ def main():
         f"subs_processed={subs_processed} http_processed={http_processed} assets_total_for_target={assets_total_for_target} "
         f"new_assets={new_assets} dead_assets={dead_assets} status_changed={status_changed} high_risk_new={high_risk_new}"
     )
-    print(f"[DEBUG] asset_events: {events_inserted} events inserted for scan_id={scan_id}", file=sys.stderr)
+    print(
+        f"[+] asset_events inserted: {events_inserted} (new={new_assets} dead={dead_assets} status_changed={status_changed} high_risk_new={high_risk_new})"
+    )
 
 
 if __name__ == "__main__":
