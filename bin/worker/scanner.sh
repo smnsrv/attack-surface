@@ -89,15 +89,34 @@ t = c.asm.targets.find_one({'_id': \"$target_id\"})
 print(t.get('organization_id', 'default') if t else 'default')
 ")"
 
-# After successful imports: build assets; on failure mark scan failed and exit non-zero
+# Full scan pipeline (build_assets + port_scan): wrap in try/finally so scan_meta finish is ALWAYS executed
+_finish_called=
+_scan_finish() {
+  if [ -z "${_finish_called:-}" ]; then
+    _finish_called=1
+    python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish success "$subs_count" "$http_count" || true
+  fi
+}
+trap _scan_finish EXIT
+
 echo "[+] Building assets ..."
 python3 /app/bin/parser/build_assets.py --scan-id "$scan_id" --target-id "$target_id" --org-id "$org_id" || {
   python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish failed "$subs_count" "$http_count"
+  _finish_called=1
   exit 1
 }
 echo "[+] Assets built."
 
-# Scan metadata: record finish success
+# Port scanning: wrap so scan_meta finish ALWAYS runs (timeout prevents infinite hang)
+echo "[+] Port scanning ..."
+if ( timeout 14400 python3 /app/bin/worker/port_scan.py --scan-id "$scan_id" --target-id "$target_id" --org-id "$org_id" --scan-path "$scan_path" ); then
+  :
+else
+  echo "[WARN] port_scan exited or timed out, continuing to finish"
+fi
+echo "[+] Port scan step done."
+
 python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish success "$subs_count" "$http_count"
+_finish_called=1
 
 echo "[+] Scan completed. subs.json: ${subs_count} lines, http.json: ${http_count} lines"

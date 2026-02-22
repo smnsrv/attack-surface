@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from bson.errors import InvalidId
+from bson.objectid import ObjectId
 from pymongo import MongoClient
 import redis
 from flask import Flask
@@ -50,6 +52,7 @@ def ensure_org_isolation_indexes():
     # Assets
     assets = db.assets
     _ensure_index(assets, "assets", [("organization_id", 1)], "org_1")
+    _ensure_index(assets, "assets", [("organization_id", 1), ("state", 1)], "org_state_1")
     _ensure_index(assets, "assets", [("organization_id", 1), ("value", 1)], "org_value_1")
     _ensure_index(assets, "assets", [("organization_id", 1), ("risk_score", 1)], "org_risk_score_1")
     _ensure_index(assets, "assets", [("organization_id", 1), ("alive", 1)], "org_alive_1")
@@ -58,6 +61,10 @@ def ensure_org_isolation_indexes():
     scans = db.scans
     _ensure_index(scans, "scans", [("organization_id", 1)], "org_1")
     _ensure_index(scans, "scans", [("organization_id", 1), ("started_at", -1)], "org_started_at_-1")
+
+    # Services
+    services = db.services
+    _ensure_index(services, "services", [("organization_id", 1), ("last_seen", -1)], "org_last_seen_-1")
 
 
 def ensure_asset_events_indexes():
@@ -105,6 +112,18 @@ def get_current_org_id():
 def org_filter():
     """Return query filter for the current organization (strict: only matching organization_id)."""
     return {"organization_id": get_current_org_id()}
+
+
+# Asset state machine: allowed transitions (from_state -> set of to_states)
+ASSET_STATE_TRANSITIONS = {
+    "discovered": {"monitored", "accepted", "ignored"},
+    "monitored": {"accepted", "ignored"},
+    "accepted": {"ignored"},
+    "ignored": {"monitored", "accepted"},
+    "archived": set(),  # no transition allowed
+}
+# Request body may only set state to one of these (discovered is insert-only)
+ALLOWED_STATE_VALUES = {"monitored", "accepted", "ignored", "archived"}
 
 
 @app.errorhandler(NoOrganizationsError)
@@ -174,7 +193,22 @@ def serialize_target(doc):
         "name": doc.get("name"),
         "domains": doc.get("domains", []),
         "enabled": doc.get("enabled", True),
+        "port_scan_mode": doc.get("port_scan_mode", "top1000"),
+        "full_scan_day": doc.get("full_scan_day", 6),
         "created_at": doc.get("created_at"),
+    }
+
+
+def serialize_service(doc):
+    """Convert a services document to API-friendly dict (ip, port, asset_value, first_seen, last_seen, last_scan_id, target_id)."""
+    return {
+        "ip": doc.get("ip"),
+        "port": doc.get("port"),
+        "asset_value": doc.get("asset_value"),
+        "first_seen": doc.get("first_seen"),
+        "last_seen": doc.get("last_seen"),
+        "last_scan_id": doc.get("last_scan_id"),
+        "target_id": doc.get("target_id"),
     }
 
 @app.route("/api/<target>/<datatype>")
@@ -309,6 +343,7 @@ def create_target():
     if not org_id:
         return error_response("organization_id required for org isolation", 400)
 
+    # port_scan_mode and full_scan_day are defaults set only on insert; do not overwrite on existing targets.
     doc = {
         "_id": slug,
         "name": name.strip(),
@@ -316,6 +351,8 @@ def create_target():
         "enabled": enabled,
         "organization_id": org_id,
         "created_at": datetime.utcnow().isoformat() + "Z",
+        "port_scan_mode": "top1000",  # allowed: "top1000" | "full"
+        "full_scan_day": 6,  # Sunday
     }
 
     targets.insert_one(doc)
@@ -404,6 +441,124 @@ def delete_target(target_id):
         return error_response("Target not found", 404)
 
     return jsonify({"message": "Target deleted"}), 200
+
+
+@app.route("/api/services", methods=["GET"])
+def list_services_api():
+    """
+    GET /api/services?org=<slug>&target_id=<id>&q=<text>&port=<int>&limit=200
+    Default org from session. Filter by organization_id; optional target_id, q (ip/asset_value), port.
+    Sort last_seen desc. Returns list of services (ip, port, asset_value, first_seen, last_seen, last_scan_id, target_id).
+    """
+    org_id = request.args.get("org", "").strip() or get_current_org_id()
+    target_id = request.args.get("target_id", "").strip() or None
+    q = request.args.get("q", "").strip() or None
+    port_arg = request.args.get("port", "").strip() or None
+    try:
+        limit = min(int(request.args.get("limit", 200)), 500)
+    except ValueError:
+        limit = 200
+
+    query = {"organization_id": org_id}
+    if target_id:
+        query["target_id"] = target_id
+    if q:
+        query["$or"] = [
+            {"ip": {"$regex": q, "$options": "i"}},
+            {"asset_value": {"$regex": q, "$options": "i"}},
+        ]
+    if port_arg:
+        try:
+            query["port"] = str(int(port_arg))
+        except ValueError:
+            pass
+
+    cursor = db.services.find(query).sort("last_seen", -1).limit(limit)
+    services_list = [serialize_service(s) for s in cursor]
+    return jsonify(services_list)
+
+
+@app.route("/mvp/services", methods=["GET"])
+def list_services_ui():
+    """Services view: table with filters (q, port, target). Uses current org."""
+    org_id = get_current_org_id()
+    target_id = request.args.get("target_id", "").strip() or None
+    q = request.args.get("q", "").strip() or None
+    port_arg = request.args.get("port", "").strip() or None
+    limit = 200
+
+    query = {"organization_id": org_id}
+    if target_id:
+        query["target_id"] = target_id
+    if q:
+        query["$or"] = [
+            {"ip": {"$regex": q, "$options": "i"}},
+            {"asset_value": {"$regex": q, "$options": "i"}},
+        ]
+    if port_arg:
+        try:
+            query["port"] = str(int(port_arg))
+        except ValueError:
+            pass
+
+    services_list = list(db.services.find(query).sort("last_seen", -1).limit(limit))
+    targets_list = [serialize_target(t) for t in db.targets.find(org_filter())]
+    return render_template(
+        "services.html",
+        services=services_list,
+        targets=targets_list,
+        filter_q=q or "",
+        filter_port=port_arg or "",
+        filter_target_id=target_id or "",
+    )
+
+
+@app.route("/api/assets/<asset_id>/state", methods=["POST"])
+def update_asset_state(asset_id):
+    """
+    Change asset state. Request JSON: { "state": "monitored|accepted|ignored|archived", "notes": "optional" }.
+    Validates org ownership and allowed state transitions.
+    """
+    try:
+        oid = ObjectId(asset_id)
+    except (InvalidId, TypeError):
+        return error_response("Asset not found", 404)
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return error_response("Invalid or missing JSON body", 400)
+
+    new_state = payload.get("state")
+    if not isinstance(new_state, str) or new_state not in ALLOWED_STATE_VALUES:
+        return error_response(
+            "Field 'state' is required and must be one of: monitored, accepted, ignored, archived",
+            400,
+        )
+
+    asset = db.assets.find_one({"_id": oid, **org_filter()})
+    if asset is None:
+        return error_response("Asset not found", 404)
+
+    current_state = asset.get("state", "discovered")
+    allowed = ASSET_STATE_TRANSITIONS.get(current_state, set())
+    if new_state not in allowed:
+        return error_response(
+            f"Transition from '{current_state}' to '{new_state}' is not allowed",
+            400,
+        )
+
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    update = {
+        "state": new_state,
+        "state_changed_at": now_iso,
+        "state_changed_by": "user",
+    }
+    if "notes" in payload:
+        update["notes"] = payload["notes"] if isinstance(payload["notes"], str) else ""
+
+    db.assets.update_one({"_id": oid, **org_filter()}, {"$set": update})
+
+    return jsonify({"message": "Asset state updated", "state": new_state}), 200
 
 
 # --- CLI ---

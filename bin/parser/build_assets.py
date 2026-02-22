@@ -137,7 +137,7 @@ def main():
         if not fqdn:
             continue
         previous = db.assets.find_one({"organization_id": org_id, "type": asset_type, "value": fqdn})
-        # organization_id only in $setOnInsert (immutable); same path in $set and $setOnInsert causes Mongo error 40
+        # state is immutable during scans; only set on insert. State fields live only in $setOnInsert to avoid path conflict (Mongo 40).
         res = db.assets.find_one_and_update(
             {"target_id": target_id, "type": asset_type, "value": fqdn},
             {
@@ -152,6 +152,10 @@ def main():
                     "value": fqdn,
                     "alive": False,
                     "organization_id": org_id,
+                    "state": "discovered",
+                    "state_changed_at": now_iso,
+                    "state_changed_by": "system",
+                    "notes": "",
                 },
             },
             upsert=True,
@@ -182,7 +186,7 @@ def main():
         }
         alive = doc.get("failed") is False
         previous = db.assets.find_one({"organization_id": org_id, "type": asset_type, "value": fqdn})
-        # organization_id only in $setOnInsert (immutable); same path in $set and $setOnInsert causes Mongo error 40
+        # state is immutable during scans; only set on insert. State fields live only in $setOnInsert to avoid path conflict (Mongo 40).
         res = db.assets.find_one_and_update(
             {"target_id": target_id, "type": asset_type, "value": fqdn},
             {
@@ -198,6 +202,10 @@ def main():
                     "type": asset_type,
                     "value": fqdn,
                     "organization_id": org_id,
+                    "state": "discovered",
+                    "state_changed_at": now_iso,
+                    "state_changed_by": "system",
+                    "notes": "",
                 },
             },
             upsert=True,

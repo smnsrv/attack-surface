@@ -1,10 +1,11 @@
-FROM python:3.8-slim-bullseye
+# Bookworm (Debian 12) has glibc 2.36; naabu v2.3.7 requires GLIBC_2.32/2.34 (Bullseye has 2.31)
+FROM python:3.8-slim-bookworm
 
 ENV HOME="/root/"
 
-# Base tools and build deps (bash, jq, unzip for scanner.sh and ProjectDiscovery binaries)
+# Base tools and build deps (bash, jq, unzip, nmap for scanner.sh and ProjectDiscovery binaries)
 RUN apt-get update \
-    && apt-get install -yq apt-utils bash build-essential curl wget \
+    && apt-get install -yq apt-utils bash build-essential curl wget nmap \
     readline-common neovim git zsh zsh-syntax-highlighting zsh-autosuggestions jq python3-pip unzip p7zip libpcap-dev rubygems ruby-dev grc ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -54,7 +55,19 @@ RUN set -eux; \
     mv dnsx-extract/dnsx /usr/local/bin/dnsx; \
     chmod +x /usr/local/bin/dnsx; \
     rm -rf dnsx.zip dnsx-extract; \
-    dnsx -version || dnsx -h
+    dnsx -version || dnsx -h; \
+    # naabu (ProjectDiscovery) - port discovery; pinned v2.3.7; official release is .zip (linux_arm64 for aarch64)
+    NAABU_VER="2.3.7"; \
+    naabu_zip_amd64="https://github.com/projectdiscovery/naabu/releases/download/v${NAABU_VER}/naabu_${NAABU_VER}_linux_amd64.zip"; \
+    naabu_zip_arm64="https://github.com/projectdiscovery/naabu/releases/download/v${NAABU_VER}/naabu_${NAABU_VER}_linux_arm64.zip"; \
+    if [ "$arch" = "arm64" ]; then naabu_url="$naabu_zip_arm64"; else naabu_url="$naabu_zip_amd64"; fi; \
+    echo "Downloading naabu v${NAABU_VER} $naabu_url"; \
+    curl -sSL "$naabu_url" -o naabu.zip; \
+    unzip -q -o naabu.zip -d /tmp/naabu-extract; \
+    mv /tmp/naabu-extract/naabu /usr/local/bin/naabu; \
+    chmod +x /usr/local/bin/naabu; \
+    rm -rf naabu.zip /tmp/naabu-extract; \
+    naabu -version
 
 # Application code: full repo at /app (context is repo root)
 WORKDIR /app
