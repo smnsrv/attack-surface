@@ -16,14 +16,14 @@ scan_path="${ppath}/scans/${scan_id}"
 scope_src="${ppath}/scope/${target_id}"
 log_file="${scan_path}/scanner.log"
 
+# Scan metadata: record start (failure of subfinder or subs import will call finish failed with counts)
+python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" start
+trap 'subs_count=0; http_count=0; [ -f "$scan_path/subs.json" ] && subs_count=$(wc -l < "$scan_path/subs.json" 2>/dev/null || echo 0); [ -f "$scan_path/http.json" ] && http_count=$(wc -l < "$scan_path/http.json" 2>/dev/null || echo 0); python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish failed "$subs_count" "$http_count"; exit 1' ERR
+
 mkdir -p "$scan_path"
 
 # Log everything to scanner.log as well as stdout
 exec > >(tee -a "$log_file") 2>&1
-
-# Scan metadata: record start (failure of any later step will call finish failed)
-python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" start
-trap 'python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish failed' ERR
 
 echo "[+] Starting LOCAL MVP scan"
 echo "    target_id = ${target_id}"
@@ -62,27 +62,23 @@ echo "[+] Running httpx ..."
 cat "$scan_path/subs.txt" | httpx -silent -json > "$scan_path/http.json"
 echo "[+] httpx completed. Output: ${scan_path}/http.json"
 
+# Counts for scan metadata (after subs.json and http.json exist)
+subs_count=$(wc -l < "$scan_path/subs.json" 2>/dev/null || echo 0)
+http_count=$(wc -l < "$scan_path/http.json" 2>/dev/null || echo 0)
+
 # 7) Import results into Mongo
 echo "[+] Importing results into Mongo ..."
 python3 /app/bin/parser/import.py "$scan_path/subs.json" "$scan_id" "$target_id"
 python3 /app/bin/parser/import.py "$scan_path/http.json" "$scan_id" "$target_id" || echo "[!] http import failed (best-effort)"
 echo "[+] Import complete."
 
-# Build inventory assets from scan results (log output; on failure mark scan failed and exit)
+# After successful imports: build assets; on failure mark scan failed and exit non-zero
 echo "[+] Building assets ..."
 python3 /app/bin/parser/build_assets.py "$scan_id" "$target_id" || {
-  python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish failed
+  python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish failed "$subs_count" "$http_count"
   exit 1
 }
 echo "[+] Assets built."
-
-# Counts for scan metadata
-subs_count=$(wc -l < "$scan_path/subs.json")
-if [ -f "$scan_path/http.json" ]; then
-  http_count=$(wc -l < "$scan_path/http.json")
-else
-  http_count=0
-fi
 
 # Scan metadata: record finish success
 python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish success "$subs_count" "$http_count"

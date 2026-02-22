@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Build inventory assets from raw scan results (subs + http).
+Build inventory assets from raw collections subs/http.
 Usage: build_assets.py <scan_id> <target_id>
 """
 
@@ -27,23 +27,21 @@ def main():
     client = MongoClient("mongodb://mongo:27017")
     db = client.asm
 
-    # Ensure unique index for target_id + type + value
     db.assets.create_index(
         [("target_id", 1), ("type", 1), ("value", 1)],
         unique=True,
     )
 
-    subs_count = 0
-    http_count = 0
+    subs_processed = 0
+    http_processed = 0
 
-    # Process subs: upsert assets with type=subdomain
+    # 1) Subs: upsert assets by target_id, type, value
     for doc in db.subs.find({"scan_id": scan_id, "target_id": target_id}):
         fqdn = (doc.get("input") or "").strip().lower()
         if not fqdn:
             continue
-        asset_id = f"{target_id}|subdomain|{fqdn}"
         db.assets.update_one(
-            {"_id": asset_id},
+            {"target_id": target_id, "type": "subdomain", "value": fqdn},
             {
                 "$set": {
                     "last_seen": now,
@@ -59,46 +57,47 @@ def main():
             },
             upsert=True,
         )
-        subs_count += 1
+        subs_processed += 1
 
-    # Process http: update assets with last_http and alive
+    # 2) Http: update assets with last_http and alive (upsert if missing)
     for doc in db.http.find({"scan_id": scan_id, "target_id": target_id}):
         fqdn = (doc.get("host") or doc.get("input") or "").strip().lower()
         if not fqdn:
             continue
-        asset_id = f"{target_id}|subdomain|{fqdn}"
-        alive = doc.get("failed") is False
         port = doc.get("port")
-        if port is not None:
-            try:
-                port = int(port)
-            except (TypeError, ValueError):
-                port = None
+        port = int(port) if port is not None else None
         last_http = {
             "url": doc.get("url"),
             "status_code": doc.get("status_code"),
             "scheme": doc.get("scheme"),
             "port": port,
-            "ip": doc.get("host_ip") or doc.get("ip"),
+            "ip": doc.get("host_ip"),
             "failed": doc.get("failed"),
             "timestamp": doc.get("timestamp"),
         }
-        # Remove None values so we don't overwrite with null
-        last_http = {k: v for k, v in last_http.items() if v is not None}
-
         db.assets.update_one(
-            {"_id": asset_id},
+            {"target_id": target_id, "type": "subdomain", "value": fqdn},
             {
                 "$set": {
-                    "alive": alive,
+                    "alive": (doc.get("failed") is False),
                     "last_http": last_http,
                 },
+                "$setOnInsert": {
+                    "first_seen": now,
+                    "last_seen": now,
+                    "last_scan_id": scan_id,
+                    "target_id": target_id,
+                    "type": "subdomain",
+                    "value": fqdn,
+                },
             },
+            upsert=True,
         )
-        http_count += 1
+        http_processed += 1
 
-    print(f"Subs processed: {subs_count}")
-    print(f"HTTP processed: {http_count}")
+    assets_total_for_target = db.assets.count_documents({"target_id": target_id})
+
+    print(f"subs_processed={subs_processed} http_processed={http_processed} assets_total_for_target={assets_total_for_target}")
 
 
 if __name__ == "__main__":
