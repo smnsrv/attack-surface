@@ -5,6 +5,7 @@ import redis
 from flask import Flask
 from flask import request
 from flask import jsonify
+from flask import render_template
 from datetime import datetime
 import os
 app = Flask(__name__)
@@ -207,20 +208,41 @@ def create_target():
     return jsonify(serialize_target(doc)), 201
 
 
+# --- Mini UI (server-rendered) ---
+@app.route("/mvp")
+def ui_dashboard():
+    """Dashboard: stats and recent scans."""
+    total_targets = db.targets.count_documents({})
+    total_assets = db.assets.count_documents({})
+    alive_assets = db.assets.count_documents({"alive": True})
+    recent_scans = list(
+        db.scans.find().sort("started_at", -1).limit(10)
+    )
+    return render_template(
+        "dashboard.html",
+        total_targets=total_targets,
+        total_assets=total_assets,
+        alive_assets=alive_assets,
+        recent_scans=recent_scans,
+    )
+
+
 @app.route("/mvp/targets", methods=["GET"])
 def list_targets():
     """
-    List all targets.
+    List all targets. Returns HTML for browser (Accept: text/html), JSON otherwise.
     """
-    targets = db.targets.find()
-    data = [serialize_target(t) for t in targets]
-    return jsonify(data)
+    targets_cursor = db.targets.find()
+    targets_list = [serialize_target(t) for t in targets_cursor]
+    if request.accept_mimetypes.best_match(["application/json", "text/html"]) == "text/html":
+        return render_template("targets.html", targets=targets_list)
+    return jsonify(targets_list)
 
 
-@app.route("/mvp/targets/<target_id>", methods=["GET"])
+@app.route("/mvp/targets/<target_id>", methods=["GET"], endpoint="ui_target_assets")
 def get_target(target_id):
     """
-    Get a single target by id (slug).
+    Get a single target by id (slug). Returns HTML (assets table) for browser, JSON otherwise.
     """
     slug = target_id.strip().lower()
     targets = db.targets
@@ -229,6 +251,15 @@ def get_target(target_id):
     if doc is None:
         return error_response("Target not found", 404)
 
+    if request.accept_mimetypes.best_match(["application/json", "text/html"]) == "text/html":
+        assets = list(
+            db.assets.find({"target_id": slug}).sort("last_seen", -1)
+        )
+        return render_template(
+            "target_assets.html",
+            target_id=slug,
+            assets=assets,
+        )
     return jsonify(serialize_target(doc))
 
 

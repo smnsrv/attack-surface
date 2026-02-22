@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}ASM MVP — Home{% endblock %}
+{% block content %}
+<h1>ASM MVP</h1>
+<p>Local MVP mode. Subdomains and HTTP data in Mongo; scans and assets built from pipeline.</p>
+<ul>
+  <li><a href="{{ url_for('ui_targets') }}">Targets</a> — list and manage targets</li>
+</ul>
+<p class="muted">API: <code>/api/&lt;target&gt;/subs</code>, <code>/api/&lt;target&gt;/http</code>, <code>/mvp/targets</code></p>
+{% endblock %}

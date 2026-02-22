@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — ASM MVP{% endblock %}
+{% block content %}
+<h1 class="mb-4">Dashboard</h1>
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="card-subtitle text-muted">Targets</h6>
+        <p class="card-title fs-4 mb-0">{{ total_targets }}</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="card-subtitle text-muted">Total Assets</h6>
+        <p class="card-title fs-4 mb-0">{{ total_assets }}</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="card-subtitle text-muted">Alive Assets</h6>
+        <p class="card-title fs-4 mb-0">{{ alive_assets }}</p>
+      </div>
+    </div>
+  </div>
+</div>
+<h2 class="h5 mb-3">Recent Scans</h2>
+{% if recent_scans %}
+<div class="table-responsive">
+  <table class="table table-sm table-striped">
+    <thead>
+      <tr>
+        <th>Scan ID</th>
+        <th>Target</th>
+        <th>Status</th>
+        <th>Started</th>
+        <th>Subs</th>
+        <th>HTTP</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in recent_scans %}
+      <tr>
+        <td><code>{{ s._id }}</code></td>
+        <td>{{ s.target_id }}</td>
+        <td><span class="badge bg-{{ 'success' if s.status == 'success' else 'danger' if s.status == 'failed' else 'secondary' }}">{{ s.status }}</span></td>
+        <td>{{ s.started_at or '—' }}</td>
+        <td>{{ s.subs_count | default(0) }}</td>
+        <td>{{ s.http_count | default(0) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted">No scans yet.</p>
+{% endif %}
+<p class="mt-3 text-muted small">API: <code>/api/&lt;target&gt;/subs</code>, <code>/api/&lt;target&gt;/http</code>, <code>/mvp/targets</code></p>
+{% endblock %}

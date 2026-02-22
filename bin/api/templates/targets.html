@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Targets — ASM MVP{% endblock %}
+{% block content %}
+<h1 class="mb-4">Targets</h1>
+{% if targets %}
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Domains</th>
+        <th>Enabled</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in targets %}
+      <tr>
+        <td><code>{{ t.id }}</code></td>
+        <td>{{ t.name }}</td>
+        <td>{{ t.domains | length }}</td>
+        <td>{{ 'Yes' if t.enabled else 'No' }}</td>
+        <td><a href="{{ url_for('ui_target_assets', target_id=t.id) }}">View assets</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted">No targets yet. Create via API: <code>POST /mvp/targets</code></p>
+{% endif %}
+{% endblock %}
