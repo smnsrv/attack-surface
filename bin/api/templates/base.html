@@ -10,9 +10,26 @@
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid">
       <a class="navbar-brand" href="{{ url_for('ui_dashboard') }}">ASM MVP</a>
-      <div class="navbar-nav">
+      <div class="navbar-nav me-auto">
         <a class="nav-link" href="{{ url_for('ui_dashboard') }}">Dashboard</a>
         <a class="nav-link" href="{{ url_for('list_targets') }}">Targets</a>
+      </div>
+      <div class="navbar-nav">
+        <div class="dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Компания</a>
+          <ul class="dropdown-menu dropdown-menu-end">
+            {% for org in active_organizations %}
+            <li>
+              <form method="post" action="{{ url_for('set_org') }}" class="d-inline">
+                <input type="hidden" name="org_id" value="{{ org.slug }}">
+                <button type="submit" class="dropdown-item{% if current_org_id == org.slug %} active{% endif %}">{{ org.name }}</button>
+              </form>
+            </li>
+            {% else %}
+            <li><span class="dropdown-item text-muted">No organizations</span></li>
+            {% endfor %}
+          </ul>
+        </div>
       </div>
     </div>
   </nav>

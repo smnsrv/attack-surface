@@ -23,17 +23,27 @@ def main():
     client = MongoClient("mongodb://mongo:27017")
     db = client.asm
     scans = db.scans
+    targets = db.targets
 
     if event == "start":
         if len(sys.argv) != 4:
             print("Usage: scan_meta.py <scan_id> <target_id> start", file=sys.stderr)
             sys.exit(2)
+        target_doc = targets.find_one({"_id": target_id})
+        if not target_doc:
+            print(f"scan_meta: target '{target_id}' not found", file=sys.stderr)
+            sys.exit(1)
+        organization_id = target_doc.get("organization_id")
+        if not organization_id:
+            print(f"scan_meta: target '{target_id}' has no organization_id; org isolation required", file=sys.stderr)
+            sys.exit(1)
         now = iso_utc_now()
         scans.update_one(
             {"_id": scan_id},
             {
                 "$set": {
                     "target_id": target_id,
+                    "organization_id": organization_id,
                     "started_at": now,
                     "status": "running",
                 },
