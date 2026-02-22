@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -21,16 +21,14 @@ mkdir -p "$scan_path"
 # Log everything to scanner.log as well as stdout
 exec > >(tee -a "$log_file") 2>&1
 
+# Scan metadata: record start (failure of any later step will call finish failed)
+python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" start
+trap 'python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish failed' ERR
+
 echo "[+] Starting LOCAL MVP scan"
 echo "    target_id = ${target_id}"
 echo "    scan_id   = ${scan_id}"
 echo "    scan_path = ${scan_path}"
-
-# Fail handler: mark scan as failed in Mongo
-trap 'python3 "'"$ppath"'"/bin/parser/scan_meta.py "'"$scan_id"'" "'"$target_id"'" "failed"' ERR
-
-# Record scan start in Mongo
-python3 "$ppath/bin/parser/scan_meta.py" "$scan_id" "$target_id" "start"
 
 cd "$scan_path"
 
@@ -66,10 +64,27 @@ echo "[+] httpx completed. Output: ${scan_path}/http.json"
 
 # 7) Import results into Mongo
 echo "[+] Importing results into Mongo ..."
-python3 "$ppath/bin/parser/import.py" "$scan_path/subs.json" "$scan_id" "$target_id"
-python3 "$ppath/bin/parser/import.py" "$scan_path/http.json" "$scan_id" "$target_id"
+python3 /app/bin/parser/import.py "$scan_path/subs.json" "$scan_id" "$target_id"
+python3 /app/bin/parser/import.py "$scan_path/http.json" "$scan_id" "$target_id" || echo "[!] http import failed (best-effort)"
 echo "[+] Import complete."
 
-# 8 & 9) Mark scan success and rely on scan_meta for metadata
-python3 "$ppath/bin/parser/scan_meta.py" "$scan_id" "$target_id" "success"
-echo "[+] Scan completed successfully."
+# Build inventory assets from scan results (log output; on failure mark scan failed and exit)
+echo "[+] Building assets ..."
+python3 /app/bin/parser/build_assets.py "$scan_id" "$target_id" || {
+  python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish failed
+  exit 1
+}
+echo "[+] Assets built."
+
+# Counts for scan metadata
+subs_count=$(wc -l < "$scan_path/subs.json")
+if [ -f "$scan_path/http.json" ]; then
+  http_count=$(wc -l < "$scan_path/http.json")
+else
+  http_count=0
+fi
+
+# Scan metadata: record finish success
+python3 /app/bin/parser/scan_meta.py "$scan_id" "$target_id" finish success "$subs_count" "$http_count"
+
+echo "[+] Scan completed. subs.json: ${subs_count} lines, http.json: ${http_count} lines"

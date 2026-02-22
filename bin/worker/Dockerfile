@@ -2,9 +2,9 @@ FROM python:3.8-slim-bullseye
 
 ENV HOME="/root/"
 
-# Base tools and build deps (including jq and unzip for ProjectDiscovery binaries)
+# Base tools and build deps (bash, jq, unzip for scanner.sh and ProjectDiscovery binaries)
 RUN apt-get update \
-    && apt-get install -yq apt-utils build-essential curl wget \
+    && apt-get install -yq apt-utils bash build-essential curl wget \
     readline-common neovim git zsh zsh-syntax-highlighting zsh-autosuggestions jq python3-pip unzip p7zip libpcap-dev rubygems ruby-dev grc ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -56,9 +56,10 @@ RUN set -eux; \
     rm -rf dnsx.zip dnsx-extract; \
     dnsx -version || dnsx -h
 
-# Application code: use this repo's worker code, no Axiom
+# Application code: full repo at /app (context is repo root)
 WORKDIR /app
-COPY . /app/bin/worker
-RUN pip3 install -r /app/bin/worker/requirements.txt
+COPY . /app
+RUN chmod +x /app/bin/worker/scanner.sh \
+    && pip3 install -r /app/bin/worker/requirements.txt
 
 ENTRYPOINT ["python3", "/app/bin/worker/worker.py"]

@@ -6,7 +6,8 @@ services:
   worker:
     image: proteus/worker
     build:
-      context: bin/worker/
+      context: .
+      dockerfile: bin/worker/Dockerfile
     volumes:
       - scope_data:/app/scope
     depends_on:
